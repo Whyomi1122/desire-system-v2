@@ -2,6 +2,7 @@
 """欲望系统与SQLite/现有系统的桥接"""
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -12,7 +13,9 @@ from .safety import safety_check
 from .monologue import generate_monologue
 
 TZ_MSK = timezone(timedelta(hours=3))
-DB_PATH = "/AstrBot/data/memory_manager.db"
+
+# ====== 修改点1：使用环境变量或默认路径 ======
+DB_PATH = os.environ.get("DESIRE_DB_FILE", "./desire_state.db")
 
 
 def _get_conn():
@@ -23,6 +26,11 @@ def _get_conn():
 
 def init_tables():
     """创建欲望系统所需的表"""
+    # ====== 修改点2：确保数据库文件所在目录存在 ======
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+
     conn = _get_conn()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS desire_state (
