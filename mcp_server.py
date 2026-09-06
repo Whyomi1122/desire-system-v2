@@ -5,15 +5,27 @@ import os
 import sys
 from typing import Any
 
-from desire.integration import DesireEngine
+# 直接导入 integration.py 里的函数
+from desire.integration import (
+    load_state,
+    save_state,
+    run_tick,
+    get_status_summary,
+    init_tables,
+)
+from desire.core import apply_event
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.environ.get("DESIRE_DB_FILE") or os.path.join(BASE_DIR, "desire_system.db")
 
+# 确保数据库表存在
+init_tables()
+
 
 class DesireMCPServer:
     def __init__(self):
-        self.engine = DesireEngine(DB_FILE)
+        # 不需要 engine 了，直接调用函数
+        pass
 
     def tools(self) -> list[dict[str, Any]]:
         return [
@@ -67,20 +79,50 @@ class DesireMCPServer:
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
         arguments = arguments or {}
-        # Desktop/mobile MCP processes may sleep or be recreated between calls.
-        # Reconcile elapsed heartbeats before every observable operation.
-        if name != "desire_tick":
-            self.engine.tick_if_due()
+        
         if name == "desire_status":
-            result = self.engine.summary(catch_up=False)
+            # 直接用 integration.py 里的函数
+            summary = get_status_summary()
+            result = {"summary": summary}
+            
         elif name == "desire_event":
-            result = self.engine.trigger_event(str(arguments.get("event_type", "")))
+            event_type = str(arguments.get("event_type", ""))
+            # 加载状态 → 应用事件 → 保存
+            state = load_state()
+            changes = apply_event(state, event_type)
+            save_state(state)
+            result = {
+                "event": event_type,
+                "changes": changes,
+                "state": {
+                    name: round(d.value, 1) for name, d in state.drives.items()
+                }
+            }
+            
         elif name == "desire_tick":
-            result = self.engine.tick()
+            # 直接用 run_tick
+            result = run_tick(is_wife_present=False, event_type=None)
+            
         elif name == "desire_resolve_thought":
-            result = self.engine.resolve(str(arguments.get("thought_text", "")))
+            # 简化版 resolve：从念头池移除匹配的念头
+            state = load_state()
+            keyword = str(arguments.get("thought_text", ""))
+            resolved = []
+            remaining = []
+            for t in state.thoughts:
+                if keyword.lower() in t.content.lower() and not t.resolved:
+                    t.resolved = True
+                    resolved.append(t.content)
+                remaining.append(t)
+            state.thoughts = remaining
+            save_state(state)
+            result = {
+                "resolved": resolved,
+                "remaining_thoughts": [t.content for t in state.thoughts if not t.resolved]
+            }
         else:
             raise ValueError(f"Unknown tool: {name}")
+            
         return {
             "content": [
                 {
